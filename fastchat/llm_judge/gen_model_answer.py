@@ -2,6 +2,13 @@
 
 Usage:
 python3 gen_model_answer.py --model-path lmsys/fastchat-t5-3b-v1.0 --model-id fastchat-t5-3b-v1.0
+
+QLoRA Usage:
+python3 gen_model_answer.py \
+    --model-path <base_model_path> \
+    --model-id <model_id> \
+    --use-qlora \
+    --adapter-path <path_to_qlora_adapter>
 """
 import argparse
 import json
@@ -32,6 +39,8 @@ def run_eval(
     max_gpu_memory,
     dtype,
     revision,
+    use_qlora=False,
+    adapter_path=None,
 ):
     questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -63,6 +72,8 @@ def run_eval(
                 max_gpu_memory,
                 dtype=dtype,
                 revision=revision,
+                use_qlora=use_qlora,
+                adapter_path=adapter_path,
             )
         )
 
@@ -82,18 +93,68 @@ def get_model_answers(
     max_gpu_memory,
     dtype,
     revision,
+    use_qlora=False,
+    adapter_path=None,
 ):
-    model, tokenizer = load_model(
-        model_path,
-        revision=revision,
-        device="cuda",
-        num_gpus=num_gpus_per_model,
-        max_gpu_memory=max_gpu_memory,
-        dtype=dtype,
-        load_8bit=False,
-        cpu_offloading=False,
-        debug=False,
-    )
+    if use_qlora:
+        # Load model with QLoRA
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+        from peft import PeftModel
+
+        print(f"Loading QLoRA model from {model_path} with adapter {adapter_path}")
+
+        # Configure 4-bit quantization for QLoRA
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16 if dtype == torch.bfloat16 else torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+
+        # Load base model with quantization
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            quantization_config=bnb_config,
+            device_map="auto",
+            torch_dtype=dtype if dtype else torch.float16,
+            trust_remote_code=True,
+        )
+
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+        )
+
+        # Add pad token if missing
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+
+        # Load LoRA adapter if specified
+        if adapter_path:
+            print(f"Loading LoRA adapter from {adapter_path}")
+            model = PeftModel.from_pretrained(
+                model,
+                adapter_path,
+                torch_dtype=dtype if dtype else torch.float16,
+            )
+            print("LoRA adapter loaded successfully")
+
+        print("QLoRA model loaded successfully")
+    else:
+        # Use original FastChat load_model
+        model, tokenizer = load_model(
+            model_path,
+            revision=revision,
+            device="cuda",
+            num_gpus=num_gpus_per_model,
+            max_gpu_memory=max_gpu_memory,
+            dtype=dtype,
+            load_8bit=False,
+            cpu_offloading=False,
+            debug=False,
+        )
 
     for question in tqdm(questions):
         if question["category"] in temperature_config:
@@ -269,6 +330,17 @@ if __name__ == "__main__":
         default="main",
         help="The model revision to load.",
     )
+    parser.add_argument(
+        "--use-qlora",
+        action="store_true",
+        help="Use QLoRA (4-bit quantization) for loading the model.",
+    )
+    parser.add_argument(
+        "--adapter-path",
+        type=str,
+        default=None,
+        help="Path to the LoRA adapter weights (required when using --use-qlora).",
+    )
 
     args = parser.parse_args()
 
@@ -285,6 +357,18 @@ if __name__ == "__main__":
 
     print(f"Output to {answer_file}")
 
+    # Validate QLoRA arguments
+    if args.use_qlora:
+        print("=" * 60)
+        print("QLoRA Mode Enabled")
+        print("=" * 60)
+        print(f"Base model: {args.model_path}")
+        if args.adapter_path:
+            print(f"LoRA adapter: {args.adapter_path}")
+        else:
+            print("WARNING: No adapter path specified. Loading base model only.")
+        print("=" * 60)
+
     run_eval(
         model_path=args.model_path,
         model_id=args.model_id,
@@ -299,6 +383,8 @@ if __name__ == "__main__":
         max_gpu_memory=args.max_gpu_memory,
         dtype=str_to_torch_dtype(args.dtype),
         revision=args.revision,
+        use_qlora=args.use_qlora,
+        adapter_path=args.adapter_path,
     )
 
     reorg_answer_file(answer_file)

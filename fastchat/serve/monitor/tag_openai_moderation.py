@@ -7,7 +7,7 @@ import json
 import os
 import time
 
-import openai
+from openai import OpenAI
 import requests
 from tqdm import tqdm
 
@@ -18,12 +18,14 @@ API_ERROR_OUTPUT = "$ERROR$"
 
 
 def tag_moderation(text):
+    client = OpenAI()
     result = API_ERROR_OUTPUT
     for _ in range(API_MAX_RETRY):
         try:
-            result = openai.Moderation.create(input=text)["results"][0]
+            response = client.moderations.create(input=text)
+            result = response.results[0]
             break
-        except openai.error.OpenAIError as e:
+        except Exception as e:
             print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
 

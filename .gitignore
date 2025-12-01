@@ -5,6 +5,9 @@ __pycache__
 dist
 .venv
 
+# MT_Bench data
+fastchat/llm_judge/data/mt_bench/model_answer/
+
 # Log
 *.log
 *.log.*

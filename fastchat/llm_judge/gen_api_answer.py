@@ -9,7 +9,6 @@ import os
 import time
 import concurrent.futures
 
-import openai
 import shortuuid
 import tqdm
 
@@ -25,7 +24,7 @@ from fastchat.model.model_adapter import get_conversation_template, ANTHROPIC_MO
 
 
 def get_answer(
-    question: dict, model: str, num_choices: int, max_tokens: int, answer_file: str
+    question: dict, model: str, num_choices: int, max_tokens: int, answer_file: str, api_dict: dict = None
 ):
     assert (
         args.force_temperature is not None and "required_temperature" in question.keys()
@@ -56,7 +55,7 @@ def get_answer(
                     chat_state, model, conv, temperature, max_tokens
                 )
             else:
-                output = chat_completion_openai(model, conv, temperature, max_tokens)
+                output = chat_completion_openai(model, conv, temperature, max_tokens, api_dict)
 
             conv.update_last_message(output)
             turns.append(output)
@@ -116,8 +115,10 @@ if __name__ == "__main__":
     parser.add_argument("--openai-api-base", type=str, default=None)
     args = parser.parse_args()
 
+    # Prepare API dict if custom API base is provided
+    api_dict = None
     if args.openai_api_base is not None:
-        openai.api_base = args.openai_api_base
+        api_dict = {"api_base": args.openai_api_base}
 
     question_file = f"data/{args.bench_name}/question.jsonl"
     questions = load_questions(question_file, args.question_begin, args.question_end)
@@ -138,6 +139,7 @@ if __name__ == "__main__":
                 args.num_choices,
                 args.max_tokens,
                 answer_file,
+                api_dict,
             )
             futures.append(future)
 
