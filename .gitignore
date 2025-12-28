@@ -4,6 +4,7 @@ __pycache__
 *.egg-info
 dist
 .venv
+.ipynb_checkpoints/
 
 # MT_Bench data
 fastchat/llm_judge/data/mt_bench/model_answer/
