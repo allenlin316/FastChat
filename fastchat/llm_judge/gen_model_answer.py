@@ -3,6 +3,13 @@
 Usage:
 python3 gen_model_answer.py --model-path lmsys/fastchat-t5-3b-v1.0 --model-id fastchat-t5-3b-v1.0
 
+LoRA Usage:
+python3 gen_model_answer.py \
+    --model-path <base_model_path> \
+    --model-id <model_id> \
+    --use-lora \
+    --adapter-path <path_to_lora_adapter>
+
 QLoRA Usage:
 python3 gen_model_answer.py \
     --model-path <base_model_path> \
@@ -22,6 +29,7 @@ from tqdm import tqdm
 
 from fastchat.llm_judge.common import load_questions, temperature_config
 from fastchat.model import load_model, get_conversation_template
+from fastchat.conversation import get_conv_template
 from fastchat.utils import str_to_torch_dtype
 
 
@@ -39,8 +47,10 @@ def run_eval(
     max_gpu_memory,
     dtype,
     revision,
+    use_lora=False,
     use_qlora=False,
     adapter_path=None,
+    conv_template=None,
 ):
     questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -72,8 +82,10 @@ def run_eval(
                 max_gpu_memory,
                 dtype=dtype,
                 revision=revision,
+                use_lora=use_lora,
                 use_qlora=use_qlora,
                 adapter_path=adapter_path,
+                conv_template=conv_template,
             )
         )
 
@@ -93,10 +105,54 @@ def get_model_answers(
     max_gpu_memory,
     dtype,
     revision,
+    use_lora=False,
     use_qlora=False,
     adapter_path=None,
+    conv_template=None,
 ):
-    if use_qlora:
+    if use_lora:
+        # Load model with LoRA (without quantization)
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from peft import PeftModel
+
+        print(f"Loading LoRA model from {model_path}")
+
+        # Load base model without quantization
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            device_map="auto",
+            torch_dtype=dtype if dtype else torch.bfloat16,
+            trust_remote_code=True,
+        )
+
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+        )
+
+        # Add pad token if missing
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+
+        # Load LoRA adapter if specified
+        if adapter_path:
+            print(f"Loading LoRA adapter from {adapter_path}")
+            model = PeftModel.from_pretrained(
+                model,
+                adapter_path,
+                torch_dtype=dtype if dtype else torch.bfloat16,
+            )
+            print("LoRA adapter loaded successfully")
+        else:
+            print("WARNING: No adapter path specified. Using base model only.")
+
+        print("LoRA model loaded successfully")
+
+        # Enable KV cache for efficient generation (disable causes O(n²) memory growth)
+        model.config.use_cache = True
+    elif use_qlora:
         # Load model with QLoRA
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
         from peft import PeftModel
@@ -107,7 +163,7 @@ def get_model_answers(
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16 if dtype == torch.bfloat16 else torch.float16,
+            bnb_4bit_compute_dtype=dtype if dtype else torch.bfloat16,
             bnb_4bit_use_double_quant=True,
         )
 
@@ -137,24 +193,49 @@ def get_model_answers(
             model = PeftModel.from_pretrained(
                 model,
                 adapter_path,
-                torch_dtype=dtype if dtype else torch.float16,
+                torch_dtype=dtype if dtype else torch.bfloat16,
             )
             print("LoRA adapter loaded successfully")
 
         print("QLoRA model loaded successfully")
+
+        # Enable KV cache for efficient generation
+        model.config.use_cache = True
     else:
-        # Use original FastChat load_model
-        model, tokenizer = load_model(
+        # Load full precision model (same way as LoRA for consistency)
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        load_dtype = dtype if dtype else torch.bfloat16
+        print(f"Loading full precision model from {model_path}")
+        print(f"Using dtype: {load_dtype}")
+
+        model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            revision=revision,
-            device="cuda",
-            num_gpus=num_gpus_per_model,
-            max_gpu_memory=max_gpu_memory,
-            dtype=dtype,
-            load_8bit=False,
-            cpu_offloading=False,
-            debug=False,
+            device_map="auto",
+            torch_dtype=load_dtype,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
+
+        # Print actual model dtype and memory usage
+        print(f"Model dtype: {model.dtype}")
+        print(f"Model device: {model.device}")
+        if torch.cuda.is_available():
+            print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+        )
+
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+
+        # Enable KV cache for efficient generation (disable causes O(n²) memory growth)
+        model.config.use_cache = True
+
+        print("Full precision model loaded successfully")
 
     for question in tqdm(questions):
         if question["category"] in temperature_config:
@@ -165,7 +246,11 @@ def get_model_answers(
         choices = []
         for i in range(num_choices):
             torch.manual_seed(i)
-            conv = get_conversation_template(model_id)
+            # Use specified conv_template or fall back to model_id based template
+            if conv_template:
+                conv = get_conv_template(conv_template)
+            else:
+                conv = get_conversation_template(model_id)
             turns = []
             for j in range(len(question["turns"])):
                 qs = question["turns"][j]
@@ -181,16 +266,32 @@ def get_model_answers(
 
                 # some models may error out when generating long outputs
                 try:
+                    # Debug: print prompt info
+                    #print(f"\n{'='*50}")
+                    #print(f"Prompt length: {len(input_ids[0])} tokens")
+                    #print(f"Prompt preview:\n{prompt[:500]}...")
+                    #print(f"{'='*50}\n")
+
+                    # Move input to model's device (handles device_map="auto")
+                    input_tensor = torch.as_tensor(input_ids).to(model.device)
                     output_ids = model.generate(
-                        torch.as_tensor(input_ids).cuda(),
+                        input_tensor,
                         do_sample=do_sample,
                         temperature=temperature,
                         max_new_tokens=max_new_token,
+                        use_cache=True,
+                        pad_token_id=tokenizer.pad_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
                     )
                     if model.config.is_encoder_decoder:
                         output_ids = output_ids[0]
                     else:
                         output_ids = output_ids[0][len(input_ids[0]) :]
+
+                    # Debug: print raw generated tokens
+                    raw_output = tokenizer.decode(output_ids, skip_special_tokens=False)
+                   # print(f"Generated {len(output_ids)} tokens")
+                   # print(f"Raw output: {raw_output[:300]}...")
 
                     # be consistent with the template's stop_token_ids
                     if conv.stop_token_ids:
@@ -331,6 +432,11 @@ if __name__ == "__main__":
         help="The model revision to load.",
     )
     parser.add_argument(
+        "--use-lora",
+        action="store_true",
+        help="Use LoRA (full precision) for loading the model.",
+    )
+    parser.add_argument(
         "--use-qlora",
         action="store_true",
         help="Use QLoRA (4-bit quantization) for loading the model.",
@@ -339,7 +445,13 @@ if __name__ == "__main__":
         "--adapter-path",
         type=str,
         default=None,
-        help="Path to the LoRA adapter weights (required when using --use-qlora).",
+        help="Path to the LoRA adapter weights (required when using --use-lora or --use-qlora).",
+    )
+    parser.add_argument(
+        "--conv-template",
+        type=str,
+        default=None,
+        help="Conversation template to use (e.g., 'zero_shot', 'vicuna_v1.1', 'llama-2', 'raw'). If not set, uses model_id to determine template.",
     )
 
     args = parser.parse_args()
@@ -357,10 +469,25 @@ if __name__ == "__main__":
 
     print(f"Output to {answer_file}")
 
-    # Validate QLoRA arguments
+    # Validate LoRA/QLoRA arguments
+    if args.use_lora and args.use_qlora:
+        print("ERROR: Cannot use both --use-lora and --use-qlora. Please choose one.")
+        exit(1)
+
+    if args.use_lora:
+        print("=" * 60)
+        print("LoRA Mode Enabled (Full Precision)")
+        print("=" * 60)
+        print(f"Base model: {args.model_path}")
+        if args.adapter_path:
+            print(f"LoRA adapter: {args.adapter_path}")
+        else:
+            print("WARNING: No adapter path specified. Loading base model only.")
+        print("=" * 60)
+
     if args.use_qlora:
         print("=" * 60)
-        print("QLoRA Mode Enabled")
+        print("QLoRA Mode Enabled (4-bit Quantization)")
         print("=" * 60)
         print(f"Base model: {args.model_path}")
         if args.adapter_path:
@@ -383,8 +510,10 @@ if __name__ == "__main__":
         max_gpu_memory=args.max_gpu_memory,
         dtype=str_to_torch_dtype(args.dtype),
         revision=args.revision,
+        use_lora=args.use_lora,
         use_qlora=args.use_qlora,
         adapter_path=args.adapter_path,
+        conv_template=args.conv_template,
     )
 
     reorg_answer_file(answer_file)

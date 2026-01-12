@@ -851,6 +851,19 @@ register_conv_template(
     )
 )
 
+# Alpaca + Llama-2 mixed template (used by llama-recipes finetuning)
+register_conv_template(
+    Conversation(
+        name="alpaca-llama2",
+        system_template="[INST] <<SYS>>\n{system_message}\n<</SYS>>\n\n",
+        system_message="Below is an instruction that describes a task. Write a response that appropriately completes the request.",
+        roles=("### Instruction:\n", "### Response:\n [/INST]"),
+        sep_style=SeparatorStyle.NO_COLON_TWO,
+        sep="\n\n",
+        sep2="</s>",
+    )
+)
+
 # ChatGLM default template
 register_conv_template(
     Conversation(
