@@ -13,6 +13,7 @@ fastchat/llm_judge/data/mt_bench/model_answer/
 *.log
 *.log.*
 *.json
+*.jsonl
 !playground/deepspeed_config_s2.json
 !playground/deepspeed_config_s3.json
 

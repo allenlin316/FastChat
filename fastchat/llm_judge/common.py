@@ -11,7 +11,7 @@ import re
 import time
 from typing import Optional
 
-from openai import OpenAI, AzureOpenAI
+from openai import OpenAI, AzureOpenAI, BadRequestError
 import anthropic
 
 from fastchat.model.model_adapter import (
@@ -404,7 +404,7 @@ def play_a_match_pair(match: MatchPair, output_file: str):
     return result
 
 
-def chat_completion_openai(model, conv, temperature, max_tokens, api_dict=None):
+def chat_completion_openai(model, conv, temperature, max_tokens, api_dict=None, reasoning_effort=None):
     if api_dict is not None:
         client = OpenAI(
             base_url=api_dict.get("api_base"),
@@ -412,20 +412,54 @@ def chat_completion_openai(model, conv, temperature, max_tokens, api_dict=None):
         )
     else:
         client = OpenAI()
-    
+
     output = API_ERROR_OUTPUT
+    use_max_completion_tokens = False
+    use_default_temperature = False
     for _ in range(API_MAX_RETRY):
         try:
             messages = conv.to_openai_api_messages()
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                n=1,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            output = response.choices[0].message.content
+            # Build kwargs based on model requirements
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "n": 1,
+            }
+            # Handle temperature (some models only support default temperature=1)
+            if not use_default_temperature:
+                kwargs["temperature"] = temperature
+            # Handle max_tokens vs max_completion_tokens
+            if use_max_completion_tokens:
+                kwargs["max_completion_tokens"] = max_tokens
+            else:
+                kwargs["max_tokens"] = max_tokens
+            # Add reasoning_effort for reasoning models (o1, o3-mini, etc.)
+            if reasoning_effort is not None:
+                kwargs["reasoning_effort"] = reasoning_effort
+
+            response = client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content
+            # Handle None content (can happen with some models)
+            if content is not None:
+                output = content
+            else:
+                print(f"Warning: Empty content received from model {model}")
+                output = ""
             break
+        except BadRequestError as e:
+            error_msg = str(e)
+            # Handle models that require max_completion_tokens instead of max_tokens
+            if "max_tokens" in error_msg and "max_completion_tokens" in error_msg:
+                print(f"Switching to max_completion_tokens for model {model}")
+                use_max_completion_tokens = True
+                continue
+            # Handle models that don't support custom temperature
+            if "temperature" in error_msg and "unsupported" in error_msg.lower():
+                print(f"Switching to default temperature for model {model}")
+                use_default_temperature = True
+                continue
+            print(type(e), e)
+            time.sleep(API_RETRY_SLEEP)
         except Exception as e:
             print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
@@ -451,24 +485,52 @@ def chat_completion_openai_azure(model, conv, temperature, max_tokens, api_dict=
         model = model[6:]
 
     output = API_ERROR_OUTPUT
+    use_max_completion_tokens = False
+    use_default_temperature = False
     for _ in range(API_MAX_RETRY):
         try:
             messages = conv.to_openai_api_messages()
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                n=1,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            output = response.choices[0].message.content
+            # Build kwargs based on model requirements
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "n": 1,
+            }
+            # Handle temperature (some models only support default temperature=1)
+            if not use_default_temperature:
+                kwargs["temperature"] = temperature
+            # Handle max_tokens vs max_completion_tokens
+            if use_max_completion_tokens:
+                kwargs["max_completion_tokens"] = max_tokens
+            else:
+                kwargs["max_tokens"] = max_tokens
+
+            response = client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content
+            # Handle None content (can happen with some models)
+            if content is not None:
+                output = content
+            else:
+                print(f"Warning: Empty content received from model {model}")
+                output = ""
             break
+        except BadRequestError as e:
+            error_msg = str(e)
+            # Handle models that require max_completion_tokens instead of max_tokens
+            if "max_tokens" in error_msg and "max_completion_tokens" in error_msg:
+                print(f"Switching to max_completion_tokens for model {model}")
+                use_max_completion_tokens = True
+                continue
+            # Handle models that don't support custom temperature
+            if "temperature" in error_msg and "unsupported" in error_msg.lower():
+                print(f"Switching to default temperature for model {model}")
+                use_default_temperature = True
+                continue
+            print(type(e), e)
+            time.sleep(API_RETRY_SLEEP)
         except Exception as e:
             print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
-            # Check if it's a fatal error
-            if "invalid" in str(e).lower():
-                break
         except KeyError:
             print(response)
             break

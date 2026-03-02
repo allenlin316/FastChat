@@ -24,7 +24,7 @@ from fastchat.model.model_adapter import get_conversation_template, ANTHROPIC_MO
 
 
 def get_answer(
-    question: dict, model: str, num_choices: int, max_tokens: int, answer_file: str, api_dict: dict = None
+    question: dict, model: str, num_choices: int, max_tokens: int, answer_file: str, api_dict: dict = None, reasoning_effort: str = None
 ):
     assert (
         args.force_temperature is not None and "required_temperature" in question.keys()
@@ -55,7 +55,7 @@ def get_answer(
                     chat_state, model, conv, temperature, max_tokens
                 )
             else:
-                output = chat_completion_openai(model, conv, temperature, max_tokens, api_dict)
+                output = chat_completion_openai(model, conv, temperature, max_tokens, api_dict, reasoning_effort)
 
             conv.update_last_message(output)
             turns.append(output)
@@ -113,6 +113,13 @@ if __name__ == "__main__":
         "--parallel", type=int, default=1, help="The number of concurrent API calls."
     )
     parser.add_argument("--openai-api-base", type=str, default=None)
+    parser.add_argument(
+        "--reasoning-effort",
+        type=str,
+        default="medium",
+        choices=["low", "medium", "high"],
+        help="Reasoning effort for OpenAI reasoning models (o1, o3-mini, etc.). Options: low, medium, high.",
+    )
     args = parser.parse_args()
 
     # Prepare API dict if custom API base is provided
@@ -140,6 +147,7 @@ if __name__ == "__main__":
                 args.max_tokens,
                 answer_file,
                 api_dict,
+                args.reasoning_effort,
             )
             futures.append(future)
 

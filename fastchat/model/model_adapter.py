@@ -68,6 +68,8 @@ ANTHROPIC_MODEL_LIST = (
 )
 
 OPENAI_MODEL_LIST = (
+    "gpt-5.1",
+    "gpt-5-mini",
     "gpt-4.1-mini",
     "gpt-4.1-nano",
     "gpt-3.5-turbo",
@@ -89,6 +91,7 @@ OPENAI_MODEL_LIST = (
     "gpt-4o-mini-2024-07-18",
     "gpt-4o-2024-05-13",
     "gpt-4o-2024-08-06",
+    "gpt-4o",
     "chatgpt-4o-latest-20240903",
     "chatgpt-4o-latest",
     "o1-preview",

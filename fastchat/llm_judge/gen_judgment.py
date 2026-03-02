@@ -270,23 +270,24 @@ if __name__ == "__main__":
         baseline_model,
         ref_answers,
     )
-    matches += make_match_func(
-        question_default,
-        models,
-        model_answers,
-        judges["default-mt"],
-        baseline_model,
-        multi_turn=True,
-    )
-    matches += make_match_func(
-        question_math,
-        models,
-        model_answers,
-        judges["math-mt"],
-        baseline_model,
-        ref_answers,
-        multi_turn=True,
-    )
+    # Only evaluate Turn 1 (single-turn), skip multi-turn evaluation
+    # matches += make_match_func(
+    #     question_default,
+    #     models,
+    #     model_answers,
+    #     judges["default-mt"],
+    #     baseline_model,
+    #     multi_turn=True,
+    # )
+    # matches += make_match_func(
+    #     question_math,
+    #     models,
+    #     model_answers,
+    #     judges["math-mt"],
+    #     baseline_model,
+    #     ref_answers,
+    #     multi_turn=True,
+    # )
 
     match_stat = {}
     match_stat["bench_name"] = args.bench_name

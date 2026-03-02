@@ -228,9 +228,12 @@ def get_model_answers(
             trust_remote_code=True,
         )
 
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-            tokenizer.pad_token_id = tokenizer.eos_token_id
+        # if tokenizer.pad_token is None:
+        #     tokenizer.pad_token = tokenizer.eos_token
+        #     tokenizer.pad_token_id = tokenizer.eos_token_id
+        # Load the tokenizer and set pad token
+        tokenizer.pad_token = tokenizer.unk_token
+        tokenizer.pad_token_id = tokenizer.unk_token_id
 
         # Enable KV cache for efficient generation (disable causes O(n²) memory growth)
         model.config.use_cache = True
@@ -252,7 +255,8 @@ def get_model_answers(
             else:
                 conv = get_conversation_template(model_id)
             turns = []
-            for j in range(len(question["turns"])):
+            # Only evaluate Turn 1 (single-turn), skip multi-turn to match gen_judgment.py
+            for j in range(min(1, len(question["turns"]))):
                 qs = question["turns"][j]
                 conv.append_message(conv.roles[0], qs)
                 conv.append_message(conv.roles[1], None)
