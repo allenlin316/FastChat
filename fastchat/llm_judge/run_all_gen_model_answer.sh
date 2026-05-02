@@ -1,24 +1,31 @@
 # Generate all methods
-for seed in 20; do
 
-## Dolly Dataset
-# python gen_model_answer.py --model-path "../../../experiments/1.1_harmful_scores/Dolly/Full-benign/dolly-7b-full-ft/20-epoch=5" --model-id "llama-2-full-benign"
+## Dolly dataset
+# SFT (w/o defense)
+# python gen_model_answer.py --model-id "Ministral-3-dolly" --model-path "../../../experiments/1.1_harmful_scores/Dolly/Ours-Full-final_min5_cand10/dolly-Ministral-8b-full-ft/20/"
+# SafeInstr (Bianchi)
+python gen_model_answer.py --model-id "Ministral-3-dolly-SafeInstr-k10" --model-path "../../../experiments/1.1_harmful_scores/Dolly/Bianchi-safety-augmentation_k10/dolly-Ministral-8b-full-ft/20/"
+# SAP
+# python gen_model_answer.py --model-id "Ministral-3-dolly-SAP" --model-path "/workspace/models/Ministral-3-8B-Instruct-textonly" --use-lora --adapter-path "../../../experiments/SAP/SAPcode/checkpoints/Ministral-3-8B-Instruct-textonly/sap_model_dolly/"
 
-# python gen_model_answer.py --model-path "/workspace/models/Llama-2-7B-Chat-fp16" --model-id "llama-2-dolly-lora-final_min5_cand10" --use-lora --adapter-path "../../../experiments/1.1_harmful_scores/Dolly/Ours-lora-final_min5_cand10/dolly-7b-lora-ft/${seed}"
+# SafeLoRA
+# python gen_model_answer.py --model-id "Ministral-3-dolly-SafeLoRA-threshold0.9" --model-path "/workspace/models/Ministral-3-8B-Instruct-textonly" --use-lora --adapter-path "../../../experiments/1.1_harmful_scores/Dolly/SafeLoRA-dolly/dolly-Ministral-8b-lora-safelora/"
 
-# python gen_model_answer.py --model-path "/workspace/models/Llama-2-7B-Chat-fp16" --model-id "llama-2-dolly-QLoRA-final_min5_cand10" --use-qlora --adapter-path "../../../experiments/1.1_harmful_scores/Dolly/Ours-QLoRA-final_min5_cand10/dolly-7b-QLoRA-ft/${seed}"
+# AsFT
+# python gen_model_answer.py --model-id "Ministral-3-dolly-AsFT-reg1" --model-path "/workspace/models/Ministral-3-8B-Instruct-textonly" --use-lora --adapter-path "../../../experiments/AsFT/finetuned_models/dolly/Ministral-3-8B-Instruct-textonly/dolly_AsFT_reg1_top100_clean/"
 
-# python gen_model_answer.py --model-path "/workspace/models/Llama-2-7B-Chat-fp16" --model-id "llama-2-dolly-SMART-LoRA-kl-mu1" --use-lora --adapter-path "../../../experiments/bppo_finetuning/dolly_final_LoRA_FT_smart_kl_mu1/${seed}"
+# SafeGrad
+# python gen_model_answer.py --model-id "Ministral-3-dolly-SafeGrad-rho1" --model-path "/workspace/models/Ministral-3-8B-Instruct-textonly" --use-lora --adapter-path "../../../experiments/SafeGrad/ckpt/dolly/Ministral-3-8B-Instruct-textonly_safegrad_f_1_0_100_100/"
 
-# python gen_model_answer.py --model-path "/workspace/models/Llama-2-7B-Chat-fp16" --model-id "llama-2-dolly-SMART-LoRA-kl-mu0" --use-lora --adapter-path "../../../experiments/bppo_finetuning/dolly_final_LoRA_FT_smart_kl_mu0/${seed}"
+# Lisa
+# python gen_model_answer.py --model-id "llama-3-dolly-lisa-alignment-10-finetune-10" --model-path "/workspace/models/Llama-3.1-8B" --use-lora --adapter-path "../../../experiments/Lisa/ckpt/dolly/Llama-3.1-8B_lisa_f_1_0_100_10_10_10000/"
 
-# ## Alpaca dataset
-python gen_model_answer.py --model-id llama-2-alpaca-full-benign --model-path ../../../experiments/1.1_harmful_scores/Alpaca/Full-Benign/alpaca-7b-full-ft/20
+# Ours SMART
+# python gen_model_answer.py --model-id "llama-3-dolly-SMART-mu2" --model-path "/workspace/models/Llama-3.1-8B-Instruct" --use-lora --adapter-path "../../../experiments/bppo_finetuning/Dolly/dolly_lora_ft_smart_kl_mu2/20/"
+#python gen_model_answer.py --model-id "gemma-3-dolly-SMART-mu2" --model-path "/workspace/models/gemma-3-4b-it-textonly" --use-lora --adapter-path "../../../experiments/bppo_finetuning/Dolly/gemma-3-4b-it-textonly/dolly_lora_ft_smart_kl_mu2/20/"
 
-# python gen_model_answer.py --model-path "/workspace/models/Llama-2-7B-Chat-fp16" --model-id "llama-2-alpaca-lora-final_min5_cand10" --use-lora --adapter-path "../../../experiments/1.1_harmful_scores/Alpaca/Ours-lora-final_min5_cand10/alpaca-7b-lora-ft/20"
+# # Alpaca dataset
+# python gen_model_answer_lisa.py --model-id "llama-2-alpaca-SafeGrad-rho4" --model-path "/workspace/models/Llama-2-7B-Chat-fp16" --use-lora --adapter-path "../../../experiments/SafeGrad/ckpt/alpaca/Llama-2-7B-Chat-fp16_safegrad_f_4_0_100_100/"
 
-# python gen_model_answer.py --model-path "/workspace/models/Llama-2-7B-Chat-fp16" --model-id "llama-2-alpaca-QLoRA-final_min5_cand10" --use-qlora --adapter-path "../../../experiments/1.1_harmful_scores/Alpaca/Ours-QLoRA-final_min5_cand10/alpaca-7b-QLoRA-ft/20"
-
-echo "" | python gen_judgment.py --judge-model gpt-5.1 --model-list llama-2-alpaca-full-benign
-
-done
+## gen judgment on gpt-5.1
+echo "" | python gen_judgment.py --judge-model gpt-5.1 --model-list Ministral-3-dolly-SafeInstr-k10

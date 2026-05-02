@@ -1,17 +1,18 @@
 """Generate answers with local models.
+Modified to support Lisa two-LoRA setup where training resizes vocab to 32001 (pad token added).
 
 Usage:
-python3 gen_model_answer.py --model-path lmsys/fastchat-t5-3b-v1.0 --model-id fastchat-t5-3b-v1.0
+python3 gen_model_answer_lisa.py --model-path lmsys/fastchat-t5-3b-v1.0 --model-id fastchat-t5-3b-v1.0
 
 LoRA Usage:
-python3 gen_model_answer.py \
+python3 gen_model_answer_lisa.py \
     --model-path <base_model_path> \
     --model-id <model_id> \
     --use-lora \
     --adapter-path <path_to_lora_adapter>
 
 QLoRA Usage:
-python3 gen_model_answer.py \
+python3 gen_model_answer_lisa.py \
     --model-path <base_model_path> \
     --model-id <model_id> \
     --use-qlora \
@@ -50,7 +51,6 @@ def run_eval(
     use_lora=False,
     use_qlora=False,
     adapter_path=None,
-    adapter_path2=None,
     conv_template=None,
 ):
     questions = load_questions(question_file, question_begin, question_end)
@@ -86,7 +86,6 @@ def run_eval(
                 use_lora=use_lora,
                 use_qlora=use_qlora,
                 adapter_path=adapter_path,
-                adapter_path2=adapter_path2,
                 conv_template=conv_template,
             )
         )
@@ -110,7 +109,6 @@ def get_model_answers(
     use_lora=False,
     use_qlora=False,
     adapter_path=None,
-    adapter_path2=None,
     conv_template=None,
 ):
     if use_lora:
@@ -123,10 +121,14 @@ def get_model_answers(
         # Load base model without quantization
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            device_map="cuda",
+            device_map="auto",
             torch_dtype=dtype if dtype else torch.bfloat16,
             trust_remote_code=True,
         )
+
+        # Lisa training adds a pad token, resizing vocab from 32000 to 32001.
+        # Resize here to match before loading any LoRA.
+        model.resize_token_embeddings(32001, mean_resizing=False)
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -134,23 +136,10 @@ def get_model_answers(
             trust_remote_code=True,
         )
 
-        # Replicate the same tokenizer + embedding resize done during training,
-        # so the vocab size matches the saved LoRA checkpoint before loading it.
-        special_tokens_dict = {}
+        # Add pad token if missing
         if tokenizer.pad_token is None:
-            special_tokens_dict["pad_token"] = "[PAD]"
-        if tokenizer.eos_token is None:
-            special_tokens_dict["eos_token"] = "</s>"
-        if tokenizer.bos_token is None:
-            special_tokens_dict["bos_token"] = "<s>"
-        if tokenizer.unk_token is None:
-            special_tokens_dict["unk_token"] = "<unk>"
-        if special_tokens_dict:
-            tokenizer.add_special_tokens(special_tokens_dict)
-        _vocab_size = getattr(model.config, 'vocab_size', None) or getattr(getattr(model.config, 'text_config', None), 'vocab_size', None)
-        if _vocab_size is not None and len(tokenizer) != _vocab_size:
-            print(f"Resizing base model embeddings from {_vocab_size} to {len(tokenizer)}")
-            model.resize_token_embeddings(len(tokenizer))
+            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token_id = tokenizer.eos_token_id
 
         # Load LoRA adapter if specified
         if adapter_path:
@@ -161,15 +150,6 @@ def get_model_answers(
                 torch_dtype=dtype if dtype else torch.bfloat16,
             )
             print("LoRA adapter loaded successfully")
-            if adapter_path2:
-                print(f"Merging adapter 1 and loading adapter 2 from {adapter_path2}")
-                model = model.merge_and_unload()
-                model = PeftModel.from_pretrained(
-                    model,
-                    adapter_path2,
-                    torch_dtype=dtype if dtype else torch.bfloat16,
-                )
-                print("LoRA adapter 2 loaded successfully")
         else:
             print("WARNING: No adapter path specified. Using base model only.")
 
@@ -200,6 +180,10 @@ def get_model_answers(
             torch_dtype=dtype if dtype else torch.float16,
             trust_remote_code=True,
         )
+
+        # Lisa training adds a pad token, resizing vocab from 32000 to 32001.
+        # Resize here to match before loading any LoRA.
+        model.resize_token_embeddings(32001, mean_resizing=False)
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -242,6 +226,10 @@ def get_model_answers(
             low_cpu_mem_usage=True,
         )
 
+        # Lisa training adds a pad token, resizing vocab from 32000 to 32001.
+        # Resize here to match before loading any LoRA.
+        model.resize_token_embeddings(32001, mean_resizing=False)
+
         # Print actual model dtype and memory usage
         print(f"Model dtype: {model.dtype}")
         print(f"Model device: {model.device}")
@@ -253,10 +241,6 @@ def get_model_answers(
             trust_remote_code=True,
         )
 
-        # if tokenizer.pad_token is None:
-        #     tokenizer.pad_token = tokenizer.eos_token
-        #     tokenizer.pad_token_id = tokenizer.eos_token_id
-        # Load the tokenizer and set pad token
         tokenizer.pad_token = tokenizer.unk_token
         tokenizer.pad_token_id = tokenizer.unk_token_id
 
@@ -274,12 +258,11 @@ def get_model_answers(
         choices = []
         for i in range(num_choices):
             torch.manual_seed(i)
-            # Use specified conv_template, or detect from model_path (which contains
-            # the actual model family name, e.g. Llama-3.1-8B), falling back to model_id.
+            # Use specified conv_template or fall back to model_id based template
             if conv_template:
                 conv = get_conv_template(conv_template)
             else:
-                conv = get_conversation_template(model_path)
+                conv = get_conversation_template(model_id)
             turns = []
             # Only evaluate Turn 1 (single-turn), skip multi-turn to match gen_judgment.py
             for j in range(min(1, len(question["turns"]))):
@@ -296,18 +279,10 @@ def get_model_answers(
 
                 # some models may error out when generating long outputs
                 try:
-                    # Debug: print prompt info
-                    #print(f"\n{'='*50}")
-                    #print(f"Prompt length: {len(input_ids[0])} tokens")
-                    #print(f"Prompt preview:\n{prompt[:500]}...")
-                    #print(f"{'='*50}\n")
-
                     # Move input to model's device (handles device_map="auto")
                     input_tensor = torch.as_tensor(input_ids).to(model.device)
-                    attention_mask = torch.ones_like(input_tensor)
                     output_ids = model.generate(
                         input_tensor,
-                        attention_mask=attention_mask,
                         do_sample=do_sample,
                         temperature=temperature,
                         max_new_tokens=max_new_token,
@@ -320,10 +295,7 @@ def get_model_answers(
                     else:
                         output_ids = output_ids[0][len(input_ids[0]) :]
 
-                    # Debug: print raw generated tokens
                     raw_output = tokenizer.decode(output_ids, skip_special_tokens=False)
-                   # print(f"Generated {len(output_ids)} tokens")
-                   # print(f"Raw output: {raw_output[:300]}...")
 
                     # be consistent with the template's stop_token_ids
                     if conv.stop_token_ids:
@@ -480,12 +452,6 @@ if __name__ == "__main__":
         help="Path to the LoRA adapter weights (required when using --use-lora or --use-qlora).",
     )
     parser.add_argument(
-        "--adapter-path2",
-        type=str,
-        default=None,
-        help="Path to a second LoRA adapter (Lisa-style). Adapter 1 is merged first, then this adapter is loaded on top. Only applies with --use-lora.",
-    )
-    parser.add_argument(
         "--conv-template",
         type=str,
         default=None,
@@ -514,7 +480,7 @@ if __name__ == "__main__":
 
     if args.use_lora:
         print("=" * 60)
-        print("LoRA Mode Enabled (Full Precision)")
+        print("LoRA Mode Enabled (Full Precision) [Lisa: vocab=32001]")
         print("=" * 60)
         print(f"Base model: {args.model_path}")
         if args.adapter_path:
@@ -525,7 +491,7 @@ if __name__ == "__main__":
 
     if args.use_qlora:
         print("=" * 60)
-        print("QLoRA Mode Enabled (4-bit Quantization)")
+        print("QLoRA Mode Enabled (4-bit Quantization) [Lisa: vocab=32001]")
         print("=" * 60)
         print(f"Base model: {args.model_path}")
         if args.adapter_path:
@@ -551,7 +517,6 @@ if __name__ == "__main__":
         use_lora=args.use_lora,
         use_qlora=args.use_qlora,
         adapter_path=args.adapter_path,
-        adapter_path2=args.adapter_path2,
         conv_template=args.conv_template,
     )
 
