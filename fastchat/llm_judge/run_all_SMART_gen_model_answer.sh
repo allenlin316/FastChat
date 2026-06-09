@@ -1,23 +1,19 @@
-# Generate all methods
-for seed in 20; do
-## Dolly dataset
-python gen_model_answer.py --model-id llama-2-dolly_lora_ft_smart_kl_lambda0_mu10-seed${seed} --model-path "../../../experiments/bppo_finetuning/Gsm8k/Llama-2-7B-Chat-fp16/gsm8k_lora_ft_smart_kl_lambda0_mu10_alpha32/20_merged/"
+# Generate model answers for the 8 Dolly SMART runs (λ × seed), then judge with GPT-5.1.
 
-# python gen_model_answer.py --model-id "llama-2-dolly-SFT-seed${seed}" --model-path "../../../experiments/1.1_harmful_scores/Dolly/Ours-lora-final_min5_cand10/dolly-7b-lora-ft/42_merged/"
+EXP_LOCAL="../../../experiments"
+SUBDIR="bppo_finetuning/Dolly/Llama-2-7B-Chat-fp16"
 
-# python gen_model_answer.py --model-id "llama-2-dolly-Bianchi-safety-k10-seed${seed}" --model-path "../../../experiments/1.1_harmful_scores/Dolly/Bianchi-safety-augmentation_k10/dolly-7b-lora-ft/42_merged/"
+MODEL_IDS=()
 
-# python gen_model_answer.py --model-id "llama-2-dolly-lambda0.5-mu10-seed${seed}" --model-path "../../../experiments/bppo_finetuning/Dolly/Llama-2-7B-Chat-fp16/dolly_lora_ft_smart_kl_lambda0.5_mu10/42_merged/"
+for seed in 106; do
+for lambda in 0 0.3 0.5 1.0; do
+    method="dolly_lora_ft_smart_kl_lambda${lambda}_mu10_lr2e-5_ep10"
+    model_id="llama-2-dolly-lambda${lambda}-mu10-seed${seed}"
+    local_path="${EXP_LOCAL}/${SUBDIR}/${method}/${seed}_merged"
 
-## Alpaca dataset
-# python gen_model_answer.py --model-id "llama-2-alpaca-SFT-seed${seed}" --model-path "../../../experiments/1.1_harmful_scores/Alpaca/Ours-lora-final_min5_cand10/alpaca-7b-lora-ft/42_merged/"
-
-# python gen_model_answer.py --model-id "llama-2-alpaca-Bianchi-safety-k10-seed${seed}" --model-path "../../../experiments/1.1_harmful_scores/Alpaca/Bianchi-safety-augmentation_k10/alpaca-7b-lora-ft/42_merged/"
-
-# python gen_model_answer.py --model-id "llama-2-dolly-lambda0.5-mu10-seed${seed}" --model-path "../../../experiments/bppo_finetuning/Alpaca/Llama-2-7B-Chat-fp16/alpaca_lora_ft_smart_kl_lambda0.5_mu10/42_merged/"
-
-
-## gen judgment on gpt-5.1
-echo "" | python gen_judgment.py --judge-model gpt-5.1 --model-list llama-2-dolly_lora_ft_smart_kl_lambda0_mu10-seed${seed}
-
+    python gen_model_answer.py --model-id "$model_id" --model-path "$local_path"
+    MODEL_IDS+=("$model_id")
 done
+done
+
+#echo "" | python gen_judgment.py --judge-model gpt-5.1 --model-list "${MODEL_IDS[@]}"

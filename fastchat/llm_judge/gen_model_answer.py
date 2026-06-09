@@ -236,7 +236,7 @@ def get_model_answers(
 
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            device_map="auto",
+            device_map="cuda",
             torch_dtype=load_dtype,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
