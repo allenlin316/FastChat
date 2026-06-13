@@ -274,20 +274,32 @@ def get_model_answers(
         choices = []
         for i in range(num_choices):
             torch.manual_seed(i)
-            # Use specified conv_template, or detect from model_path (which contains
-            # the actual model family name, e.g. Llama-3.1-8B), falling back to model_id.
-            if conv_template:
-                conv = get_conv_template(conv_template)
+            # Default to the tokenizer's native chat template so the eval prompt
+            # format matches whichever chat template the base model was trained
+            # under (Llama-2/3, Gemma, Qwen, ...). Pass --conv-template explicitly
+            # to fall back to FastChat's hand-rolled conv templates (legacy).
+            use_chat_template = (conv_template is None)
+            if use_chat_template:
+                conv = None
             else:
-                conv = get_conversation_template(model_path)
+                conv = get_conv_template(conv_template)
             turns = []
             # Only evaluate Turn 1 (single-turn), skip multi-turn to match gen_judgment.py
             for j in range(min(1, len(question["turns"]))):
                 qs = question["turns"][j]
-                conv.append_message(conv.roles[0], qs)
-                conv.append_message(conv.roles[1], None)
-                prompt = conv.get_prompt()
-                input_ids = tokenizer([prompt]).input_ids
+                if use_chat_template:
+                    messages = [{"role": "user", "content": qs}]
+                    input_ids = [tokenizer.apply_chat_template(
+                        messages,
+                        tokenize=True,
+                        add_generation_prompt=True,
+                        return_dict=False,
+                    )]
+                else:
+                    conv.append_message(conv.roles[0], qs)
+                    conv.append_message(conv.roles[1], None)
+                    prompt = conv.get_prompt()
+                    input_ids = tokenizer([prompt]).input_ids
 
                 if temperature < 1e-4:
                     do_sample = False
@@ -326,7 +338,9 @@ def get_model_answers(
                    # print(f"Raw output: {raw_output[:300]}...")
 
                     # be consistent with the template's stop_token_ids
-                    if conv.stop_token_ids:
+                    # (chat-template path relies on tokenizer.eos_token_id passed
+                    # to model.generate; skip the FastChat stop-token cleanup).
+                    if conv is not None and conv.stop_token_ids:
                         stop_token_ids_index = [
                             i
                             for i, id in enumerate(output_ids)
@@ -339,7 +353,7 @@ def get_model_answers(
                         output_ids,
                         spaces_between_special_tokens=False,
                     )
-                    if conv.stop_str and isinstance(conv.stop_str, list):
+                    if conv is not None and conv.stop_str and isinstance(conv.stop_str, list):
                         stop_str_indices = sorted(
                             [
                                 output.find(stop_str)
@@ -349,7 +363,7 @@ def get_model_answers(
                         )
                         if len(stop_str_indices) > 0:
                             output = output[: stop_str_indices[0]]
-                    elif conv.stop_str and output.find(conv.stop_str) > 0:
+                    elif conv is not None and conv.stop_str and output.find(conv.stop_str) > 0:
                         output = output[: output.find(conv.stop_str)]
 
                     for special_token in tokenizer.special_tokens_map.values():
@@ -360,13 +374,14 @@ def get_model_answers(
                             output = output.replace(special_token, "")
                     output = output.strip()
 
-                    if conv.name == "xgen" and output.startswith("Assistant:"):
+                    if conv is not None and conv.name == "xgen" and output.startswith("Assistant:"):
                         output = output.replace("Assistant:", "", 1).strip()
                 except RuntimeError as e:
                     print("ERROR question ID: ", question["question_id"])
                     output = "ERROR"
 
-                conv.update_last_message(output)
+                if conv is not None:
+                    conv.update_last_message(output)
                 turns.append(output)
 
             choices.append({"index": i, "turns": turns})
