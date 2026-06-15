@@ -207,6 +207,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--first-n", type=int, help="A debug option. Only run the first `n` judgments."
     )
+    parser.add_argument(
+        "--output-file", type=str, default=None,
+        help="Override the default judgment output file path.",
+    )
     args = parser.parse_args()
 
     question_file = f"data/{args.bench_name}/question.jsonl"
@@ -251,6 +255,9 @@ if __name__ == "__main__":
         else:
             make_match_func = make_match
             baseline_model = args.baseline_model
+
+    if args.output_file:
+        output_file = args.output_file
 
     check_data(questions, model_answers, ref_answers, models, judges)
 

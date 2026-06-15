@@ -21,11 +21,33 @@ import argparse
 import json
 import os
 import random
+import re
 import time
 
 import shortuuid
 import torch
 from tqdm import tqdm
+
+# Qwen3 thinking models otherwise spend a large fraction of max_new_token on
+# <think>…</think> reasoning, often getting truncated mid-thought and leaving
+# no actual answer. Pre-filling the assistant turn with an empty <think></think>
+# block is Qwen's official "skip thinking" handshake (same effect as the
+# chat-template flag enable_thinking=False) so all tokens go to the answer.
+_QWEN3_NOTHINK_PREFILL = "<think>\n\n</think>\n\n"
+# Defense in depth: strip any <think>…</think> blocks (and unclosed <think>
+# tails) that still slip through. Some checkpoints emit a post-hoc "thinking
+# process" after the answer even when thinking is disabled.
+_THINK_PAIR_RE = re.compile(r"<think\b[^>]*>.*?</think>\s*", re.DOTALL)
+_THINK_OPEN_TAIL_RE = re.compile(r"<think\b[^>]*>.*\Z", re.DOTALL)
+
+
+def _strip_think(text: str) -> str:
+    prev = None
+    while prev != text:
+        prev = text
+        text = _THINK_PAIR_RE.sub("", text)
+    text = _THINK_OPEN_TAIL_RE.sub("", text)
+    return text.strip()
 
 from fastchat.llm_judge.common import load_questions, temperature_config
 from fastchat.model import load_model, get_conversation_template
@@ -265,6 +287,17 @@ def get_model_answers(
 
         print("Full precision model loaded successfully")
 
+    # Build the list of stop tokens. Some chat-tuned models emit a turn-boundary
+    # token instead of their tokenizer's eos_token (Gemma3 emits <end_of_turn>
+    # not <eos>; Llama-3.1 emits <|eot_id|> not <|end_of_text|>; Qwen emits
+    # <|im_end|>). Add whichever the model knows so generate() halts at the end
+    # of the assistant turn.
+    stop_token_ids = [tokenizer.eos_token_id]
+    for tok in ("<end_of_turn>", "<|eot_id|>", "<|im_end|>"):
+        tid = tokenizer.convert_tokens_to_ids(tok)
+        if isinstance(tid, int) and tid != tokenizer.unk_token_id and tid not in stop_token_ids:
+            stop_token_ids.append(tid)
+
     for question in tqdm(questions):
         if question["category"] in temperature_config:
             temperature = temperature_config[question["category"]]
@@ -287,6 +320,8 @@ def get_model_answers(
                 conv.append_message(conv.roles[0], qs)
                 conv.append_message(conv.roles[1], None)
                 prompt = conv.get_prompt()
+                if "qwen" in model_path.lower() or "qwen" in model_id.lower():
+                    prompt += _QWEN3_NOTHINK_PREFILL
                 input_ids = tokenizer([prompt]).input_ids
 
                 if temperature < 1e-4:
@@ -313,7 +348,7 @@ def get_model_answers(
                         max_new_tokens=max_new_token,
                         use_cache=True,
                         pad_token_id=tokenizer.pad_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
+                        eos_token_id=stop_token_ids,
                     )
                     if model.config.is_encoder_decoder:
                         output_ids = output_ids[0]
@@ -358,7 +393,10 @@ def get_model_answers(
                                 output = output.replace(special_tok, "")
                         else:
                             output = output.replace(special_token, "")
-                    output = output.strip()
+                    # Defensive: turn-boundary tokens aren't in special_tokens_map.
+                    for tok in ("<end_of_turn>", "<|eot_id|>", "<|im_end|>"):
+                        output = output.replace(tok, "")
+                    output = _strip_think(output.strip())
 
                     if conv.name == "xgen" and output.startswith("Assistant:"):
                         output = output.replace("Assistant:", "", 1).strip()
