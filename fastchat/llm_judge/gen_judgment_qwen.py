@@ -43,6 +43,12 @@ if __name__ == "__main__":
         help="The name of the benchmark question set.",
     )
     parser.add_argument(
+        "--question-file",
+        type=str,
+        default=None,
+        help="Override the default question file path (e.g. use question_zh.jsonl for Chinese questions).",
+    )
+    parser.add_argument(
         "--judge-file",
         type=str,
         default="data/judge_prompts.jsonl",
@@ -81,7 +87,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    question_file = f"data/{args.bench_name}/question.jsonl"
+    question_file = args.question_file or f"data/{args.bench_name}/question.jsonl"
     answer_dir = f"data/{args.bench_name}/model_answer"
     ref_answer_dir = f"data/{args.bench_name}/reference_answer"
 

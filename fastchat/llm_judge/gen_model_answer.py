@@ -454,6 +454,12 @@ if __name__ == "__main__":
         help="The name of the benchmark question set.",
     )
     parser.add_argument(
+        "--question-file",
+        type=str,
+        default=None,
+        help="Override the default question file path (e.g. use question_zh.jsonl for Chinese questions).",
+    )
+    parser.add_argument(
         "--question-begin",
         type=int,
         help="A debug option. The begin index of questions.",
@@ -537,7 +543,7 @@ if __name__ == "__main__":
 
         ray.init()
 
-    question_file = f"data/{args.bench_name}/question.jsonl"
+    question_file = args.question_file or f"data/{args.bench_name}/question.jsonl"
     if args.answer_file:
         answer_file = args.answer_file
     else:
